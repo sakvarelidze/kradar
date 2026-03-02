@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: [self-hosted, linux, zerodev]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: false
+
+      - name: Set persistent Go cache env (absolute) + PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          KRADAR_GO_CACHE_ROOT="$HOME/.cache/kradar-go"
+          echo "GOMODCACHE=$KRADAR_GO_CACHE_ROOT/pkg/mod" >> "$GITHUB_ENV"
+          echo "GOCACHE=$KRADAR_GO_CACHE_ROOT/go-build" >> "$GITHUB_ENV"
+          echo "GOBIN=$KRADAR_GO_CACHE_ROOT/bin" >> "$GITHUB_ENV"
+
+          mkdir -p "$KRADAR_GO_CACHE_ROOT/pkg/mod" "$KRADAR_GO_CACHE_ROOT/go-build" "$KRADAR_GO_CACHE_ROOT/bin"
+          echo "$KRADAR_GO_CACHE_ROOT/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Go 1.25.x + goreleaser present
+        shell: bash
+        run: |
+          set -euo pipefail
+          go version | grep -Eq "go1\.25\."
+          command -v goreleaser
+          goreleaser --version
+
+      - name: Run GoReleaser (tagged release)
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          goreleaser release --clean

@@ -1,0 +1,48 @@
+project_name: kradar
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: kradar
+    binary: kradar
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: sakvarelidze
+    name: kradar
+
+brews:
+  - name: kradar
+    homepage: https://github.com/sakvarelidze/kradar
+    description: Interactive Kubernetes TUI for Helm releases and image tracking
+    license: MIT
+
+    repository:
+      owner: sakvarelidze
+      name: homebrew-kradar
+
+    install: |
+      bin.install "kradar"
+
+    test: |
+      system "#{bin}/kradar", "version"

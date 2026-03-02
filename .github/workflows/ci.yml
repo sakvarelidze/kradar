@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Build + Test + Lint
+    runs-on: [self-hosted, linux, zerodev]
+
+    env:
+      GOFLAGS: -buildvcs=false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: false
+
+      - name: Set persistent Go cache env (absolute) + PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          KRADAR_GO_CACHE_ROOT="$HOME/.cache/kradar-go"
+          echo "GOMODCACHE=$KRADAR_GO_CACHE_ROOT/pkg/mod" >> "$GITHUB_ENV"
+          echo "GOCACHE=$KRADAR_GO_CACHE_ROOT/go-build" >> "$GITHUB_ENV"
+          echo "GOBIN=$KRADAR_GO_CACHE_ROOT/bin" >> "$GITHUB_ENV"
+
+          mkdir -p "$KRADAR_GO_CACHE_ROOT/pkg/mod" "$KRADAR_GO_CACHE_ROOT/go-build" "$KRADAR_GO_CACHE_ROOT/bin"
+          echo "$KRADAR_GO_CACHE_ROOT/bin" >> "$GITHUB_PATH"
+
+      - name: Remove repo-local .cache if present
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .cache || true
+
+      - name: Runner sanity + enforce Go 1.25.x
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          lsb_release -a || cat /etc/os-release
+          command -v go
+          go version
+          go version | grep -Eq "go1\.25\."
+          go env GOPATH GOMODCACHE GOCACHE GOBIN
+
+      - name: Verify module path
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "^module github.com/sakvarelidze/kradar$" go.mod
+
+      - name: Download dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          go mod download
+
+      - name: Run unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./...
+
+      - name: Install golangci-lint (if missing)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v golangci-lint >/dev/null 2>&1; then
+            go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+          fi
+          golangci-lint version
+
+      - name: Run golangci-lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          golangci-lint run --config .golangci.yml ./...
+
+      - name: Build binary with metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+
+          VERSION="${GITHUB_REF_NAME:-dev}"
+          COMMIT="${GITHUB_SHA:-unknown}"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          go build -ldflags "\
+            -X github.com/sakvarelidze/kradar/cmd.Version=${VERSION} \
+            -X github.com/sakvarelidze/kradar/cmd.Commit=${COMMIT} \
+            -X github.com/sakvarelidze/kradar/cmd.Date=${DATE}" \
+            -o bin/kradar .
+
+          ./bin/kradar version
