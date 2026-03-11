@@ -55,6 +55,10 @@ type scanDoneMsg struct {
 	err  error
 }
 
+type chartStatusDoneMsg struct {
+	rows []helm.ServiceRow
+}
+
 type probeDoneMsg struct {
 	err error
 }
@@ -205,7 +209,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.applySort()
 			m.refreshTableRows()
-			m.statusLine = fmt.Sprintf("scan complete (%d releases)", len(msg.rows))
+			if m.checkerEnabled {
+				m.statusLine = fmt.Sprintf("loaded %d releases, checking chart versions...", len(msg.rows))
+			} else {
+				m.statusLine = fmt.Sprintf("scan complete (%d releases)", len(msg.rows))
+			}
 			m.transitionModeAfterStageUpdate()
 		} else {
 			friendly := kube.ClassifyKubeError(msg.err)
@@ -221,7 +229,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.transitionModeAfterStageUpdate()
 		}
+		if msg.err == nil && m.checkerEnabled && m.scanEvents != nil {
+			return m, waitScanEventCmd(m.scanEvents)
+		}
 		m.scanEvents = nil
+	case chartStatusDoneMsg:
+		m.rows = msg.rows
+		m.applySort()
+		m.refreshTableRows()
+		m.statusLine = fmt.Sprintf("scan complete (%d releases)", len(msg.rows))
+		m.scanEvents = nil
+
 	case probeDoneMsg:
 		m.probeCancel = nil
 		if msg.err != nil {
@@ -940,11 +958,17 @@ func (m *Model) startScanCmd() tea.Cmd {
 			ch <- probeDoneMsg{}
 			ctx, cancel := kube.TimeoutContext(120 * time.Second)
 			defer cancel()
-			opts.Progress = func(done, total int) {
+			baseOpts := opts
+			baseOpts.CheckHelmRepo = false
+			baseOpts.Progress = func(done, total int) {
 				ch <- scanProgressMsg{done: done, total: total}
 			}
-			rows, err := m.scanner.Scan(ctx, opts)
+			rows, err := m.scanner.Scan(ctx, baseOpts)
 			ch <- scanDoneMsg{rows: rows, err: err}
+			if err == nil && opts.CheckHelmRepo {
+				enriched := m.scanner.EnrichChartStatus(ctx, rows)
+				ch <- chartStatusDoneMsg{rows: enriched}
+			}
 			close(ch)
 		}()
 		return <-ch

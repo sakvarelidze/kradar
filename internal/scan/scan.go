@@ -116,37 +116,7 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) ([]helm.ServiceRow, er
 
 	wg.Wait()
 	if opts.CheckHelmRepo && s.Checker != nil {
-		checksByRelease := s.Checker.CheckAll(ctx, allReleases)
-		for i := range allRows {
-			key := allRows[i].Namespace + "/" + allRows[i].Release
-			chk, ok := checksByRelease[key]
-			if !ok {
-				continue
-			}
-			allRows[i].Checks = append(allRows[i].Checks, chk)
-			if chk.Status == "" {
-				allRows[i].ChartStatus = "unknown"
-			} else {
-				allRows[i].ChartStatus = chk.Status
-			}
-			allRows[i].ChartSourceName = chk.SourceName
-			allRows[i].ChartSourceURL = chk.SourceURL
-			allRows[i].LatestVersion = chk.Latest
-			allRows[i].RepoName = chk.RepoName
-			allRows[i].RepoURL = chk.RepoURL
-			allRows[i].IndexChartKeyTried = chk.IndexChartKeyTried
-			allRows[i].FetchError = chk.FetchError
-			allRows[i].Reason = chk.Reason
-			if chk.ChartNameRaw != "" {
-				allRows[i].ChartNameRaw = chk.ChartNameRaw
-			}
-			if chk.ChartNameNormalized != "" {
-				allRows[i].ChartNameNormalized = chk.ChartNameNormalized
-			}
-			if allRows[i].ChartStatus == "unknown" {
-				allRows[i].ChartStatusReason = chk.Reason
-			}
-		}
+		allRows = s.applyChecks(ctx, allRows, allReleases)
 	}
 	sort.Slice(allRows, func(i, j int) bool {
 		if allRows[i].Namespace == allRows[j].Namespace {
@@ -155,6 +125,59 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) ([]helm.ServiceRow, er
 		return allRows[i].Namespace < allRows[j].Namespace
 	})
 	return allRows, nil
+}
+
+func (s *Scanner) EnrichChartStatus(ctx context.Context, rows []helm.ServiceRow) []helm.ServiceRow {
+	if s.Checker == nil || len(rows) == 0 {
+		return rows
+	}
+	releases := make([]helm.ReleaseInfo, 0, len(rows))
+	for _, row := range rows {
+		releases = append(releases, helm.ReleaseInfo{
+			Name:                row.Release,
+			Namespace:           row.Namespace,
+			ChartName:           row.Chart,
+			ChartVersion:        row.ChartVer,
+			AppVersion:          row.AppVer,
+			NormalizedChartName: row.ChartNameNormalized,
+		})
+	}
+	return s.applyChecks(ctx, rows, releases)
+}
+
+func (s *Scanner) applyChecks(ctx context.Context, rows []helm.ServiceRow, releases []helm.ReleaseInfo) []helm.ServiceRow {
+	checksByRelease := s.Checker.CheckAll(ctx, releases)
+	for i := range rows {
+		key := rows[i].Namespace + "/" + rows[i].Release
+		chk, ok := checksByRelease[key]
+		if !ok {
+			continue
+		}
+		rows[i].Checks = append(rows[i].Checks, chk)
+		if chk.Status == "" {
+			rows[i].ChartStatus = "unknown"
+		} else {
+			rows[i].ChartStatus = chk.Status
+		}
+		rows[i].ChartSourceName = chk.SourceName
+		rows[i].ChartSourceURL = chk.SourceURL
+		rows[i].LatestVersion = chk.Latest
+		rows[i].RepoName = chk.RepoName
+		rows[i].RepoURL = chk.RepoURL
+		rows[i].IndexChartKeyTried = chk.IndexChartKeyTried
+		rows[i].FetchError = chk.FetchError
+		rows[i].Reason = chk.Reason
+		if chk.ChartNameRaw != "" {
+			rows[i].ChartNameRaw = chk.ChartNameRaw
+		}
+		if chk.ChartNameNormalized != "" {
+			rows[i].ChartNameNormalized = chk.ChartNameNormalized
+		}
+		if rows[i].ChartStatus == "unknown" {
+			rows[i].ChartStatusReason = chk.Reason
+		}
+	}
+	return rows
 }
 
 func (s *Scanner) scanNamespace(ctx context.Context, namespace string) ([]helm.ReleaseInfo, map[string]int, map[string][]string, error) {
