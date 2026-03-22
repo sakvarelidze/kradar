@@ -35,11 +35,11 @@ jobs:
           mkdir -p "$KRADAR_GO_CACHE_ROOT/pkg/mod" "$KRADAR_GO_CACHE_ROOT/go-build" "$KRADAR_GO_CACHE_ROOT/bin"
           echo "$KRADAR_GO_CACHE_ROOT/bin" >> "$GITHUB_PATH"
 
-      - name: Verify Go 1.25.x + goreleaser present
+      - name: Verify Go 1.26.x + goreleaser present
         shell: bash
         run: |
           set -euo pipefail
-          go version | grep -Eq "go1\.25\."
+          go version | grep -Eq "go1\.26\."
           command -v goreleaser
           goreleaser --version
 
