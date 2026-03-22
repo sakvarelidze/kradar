@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           rm -rf .cache || true
 
-      - name: Runner sanity + enforce Go 1.25.x
+      - name: Runner sanity + enforce Go 1.26.x
         shell: bash
         run: |
           set -euo pipefail
@@ -54,7 +54,7 @@ jobs:
           lsb_release -a || cat /etc/os-release
           command -v go
           go version
-          go version | grep -Eq "go1\.25\."
+          go version | grep -Eq "go1\.26\."
           go env GOPATH GOMODCACHE GOCACHE GOBIN
 
       - name: Verify module path
