@@ -159,14 +159,9 @@ func normalizeSources(in []ChartSource) []ChartSource {
 		if s.Auth.KeyFile == "" {
 			s.Auth.KeyFile = s.ClientKeyFile
 		}
-		if len(s.Headers) > 0 && s.Auth.Type == "none" {
-			for k, v := range s.Headers {
-				s.Auth.Type = "header_env"
-				s.Auth.HeaderName = k
-				s.Auth.ValueEnv = v
-				break
-			}
-		}
+		s.TLS.CAFile = expandPath(s.TLS.CAFile)
+		s.Auth.CertFile = expandPath(s.Auth.CertFile)
+		s.Auth.KeyFile = expandPath(s.Auth.KeyFile)
 		out = append(out, s)
 	}
 	return out
@@ -270,6 +265,19 @@ func RunInitWizard(path string, in *os.File, out *os.File) error {
 	}
 	cfg.ChartSources = append(cfg.ChartSources, ns)
 	return Save(resolvedPath, cfg)
+}
+
+func expandPath(p string) string {
+	if p == "" {
+		return p
+	}
+	p = os.ExpandEnv(p)
+	if strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			p = filepath.Join(home, p[2:])
+		}
+	}
+	return p
 }
 
 func splitCSV(v string) []string {

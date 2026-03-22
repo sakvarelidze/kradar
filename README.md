@@ -13,7 +13,7 @@ If this tool saves you time (or frustration), that’s awesome — and we’d lo
 
 Operating multiple Helm releases across environments can get noisy fast. `kradar` gives you a single, practical view of:
 - Release inventory
-- Chart freshness (`up_to_date`, `outdated`, `unknown`)
+- Chart freshness (`Up to date`, `Outdated`, `Unknown`)
 - Pod rollout counts
 - Image inventory
 
@@ -99,9 +99,11 @@ chart_sources:
       type: basic_env
       username_env: NEXUS_USERNAME
       password_env: NEXUS_PASSWORD
+    tls:
+      ca_file: ~/certs/company-ca.pem   # omit if using a public CA
 ```
 
-Then export credentials before running `kradar`.
+Then export credentials before running `kradar`. Path values in `tls.ca_file`, `auth.cert_file`, and `auth.key_file` support `~` and environment variables (e.g. `$CERT_DIR/ca.pem`).
 
 ## Common Commands
 

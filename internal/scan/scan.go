@@ -100,6 +100,7 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) ([]helm.ServiceRow, er
 				ChartVer:            rel.ChartVersion,
 				AppVer:              rel.AppVersion,
 				Pods:                &pods,
+				DeployedAt:          rel.DeployedAt,
 				ChartNameRaw:        rel.ChartName,
 				ChartNameNormalized: rel.NormalizedChartName,
 				Images:              images,

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sakvarelidze/kradar/internal/helm"
@@ -97,9 +99,10 @@ type Model struct {
 	helpVisible    bool
 	sortBy         sortMode
 
-	table  table.Model
-	width  int
-	height int
+	table          table.Model
+	detailViewport viewport.Model
+	width          int
+	height         int
 
 	headerStyle        lipgloss.Style
 	footerStyle        lipgloss.Style
@@ -113,6 +116,8 @@ type Model struct {
 	configPath         string
 	checkerEnabled     bool
 	showConfigModal    bool
+	filterActive       bool
+	filterInput        textinput.Model
 
 	connStage        connStage
 	connErrMsg       string
@@ -145,6 +150,13 @@ func New(scanner *scan.Scanner, kubeClient *kube.Client, scanOpts scan.Options, 
 	styles.Selected = styles.Selected.Bold(true)
 	tbl.SetStyles(styles)
 
+	ti := textinput.New()
+	ti.Placeholder = "filter..."
+	ti.CharLimit = 60
+	ti.Width = 30
+
+	vp := viewport.New(120, 20)
+
 	return &Model{
 		scanner:         scanner,
 		kubeClient:      kubeClient,
@@ -167,6 +179,8 @@ func New(scanner *scan.Scanner, kubeClient *kube.Client, scanOpts scan.Options, 
 		overlayStyle: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("63")).
 			Padding(1, 2).Background(lipgloss.Color("235")).Foreground(lipgloss.Color("252")),
 		headerAppNameStyle: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")),
+		filterInput:        ti,
+		detailViewport:     vp,
 		releaseColWidth:    releaseColWidth,
 		imagesColWidth:     imagesColWidth,
 		configPath:         meta.ConfigPath,
@@ -187,6 +201,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.resizeTable()
+		m.detailViewport.Width = msg.Width
+		m.detailViewport.Height = maxInt(1, msg.Height-2)
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
 	case scanProgressMsg:
@@ -297,6 +313,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.transitionModeAfterStageUpdate()
 	}
 	if m.mode == modeTable {
+		if m.filterActive {
+			var cmd tea.Cmd
+			m.filterInput, cmd = m.filterInput.Update(msg)
+			return m, cmd
+		}
 		var cmd tea.Cmd
 		m.table, cmd = m.table.Update(msg)
 		return m, cmd
@@ -334,19 +355,44 @@ func (m *Model) tableView() string {
 		headerHeight = 1
 		footerHeight = 1
 	)
-	contentHeight := maxInt(3, m.height-headerHeight-footerHeight)
+	filterHeight := 0
+	if m.filterActive {
+		filterHeight = 1
+	}
+	contentHeight := maxInt(3, m.height-headerHeight-footerHeight-filterHeight)
 	if m.height <= 0 {
 		contentHeight = 20
 	}
+	rowHeight := maxInt(3, contentHeight-1) // -1 for the header row
 	m.table.SetHeight(maxInt(3, contentHeight))
-	body := m.table.View()
+	body := m.renderTableHeader() + "\n" + m.renderTableBody(rowHeight)
 
+	if m.filterActive {
+		return lipgloss.JoinVertical(lipgloss.Left, header, m.buildFilterBar(), body, footer)
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+}
+
+func (m *Model) buildFilterBar() string {
+	w := m.width
+	if w <= 0 {
+		w = 120
+	}
+	content := "/ " + m.filterInput.View() + "  esc to clear"
+	return lipgloss.NewStyle().
+		Background(lipgloss.Color("235")).
+		Foreground(lipgloss.Color("252")).
+		Width(w).
+		Padding(0, 1).
+		Render(content)
 }
 
 func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	if key == "ctrl+c" || key == "q" {
+	if key == "ctrl+c" {
+		return m, tea.Quit
+	}
+	if key == "q" && !m.filterActive {
 		return m, tea.Quit
 	}
 
@@ -386,7 +432,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case modeDetails:
-		if key == "r" {
+		switch key {
+		case "r":
 			if m.probeCancel != nil {
 				m.probeCancel()
 				m.probeCancel = nil
@@ -396,8 +443,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.startScanCmd()
-		}
-		if key == "esc" {
+		case "esc":
 			if m.splashDone {
 				m.mode = modeTable
 			} else {
@@ -405,9 +451,39 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.table.Focus()
 			return m, nil
+		default:
+			var cmd tea.Cmd
+			m.detailViewport, cmd = m.detailViewport.Update(msg)
+			return m, cmd
 		}
 	case modeTable:
+		if m.filterActive {
+			if key == "esc" {
+				m.filterActive = false
+				m.filterInput.SetValue("")
+				m.filterInput.Blur()
+				m.refreshTableRows()
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.filterInput, cmd = m.filterInput.Update(msg)
+			m.refreshTableRows()
+			return m, cmd
+		}
 		switch key {
+		case "/":
+			m.filterActive = true
+			m.filterInput.Focus()
+			return m, nil
+		case "a":
+			m.scanOpts.AllNamespaces = !m.scanOpts.AllNamespaces
+			if m.scanOpts.AllNamespaces {
+				m.scanOpts.Namespace = ""
+			}
+			if m.loading {
+				return m, nil
+			}
+			return m, m.startScanCmd()
 		case "r":
 			if m.probeCancel != nil {
 				m.probeCancel()
@@ -544,7 +620,11 @@ func (m *Model) detailView() string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Release: %s/%s\n", r.Namespace, r.Release)
-	fmt.Fprintf(&b, "Chart: %s@%s appVersion=%s\n\n", r.Chart, r.ChartVer, emptyDash(r.AppVer))
+	age := "-"
+	if !r.DeployedAt.IsZero() {
+		age = fmt.Sprintf("%s (deployed %s)", formatAge(r.DeployedAt), r.DeployedAt.Local().Format("2006-01-02 15:04"))
+	}
+	fmt.Fprintf(&b, "Chart: %s@%s appVersion=%s  age: %s\n\n", r.Chart, r.ChartVer, emptyDash(r.AppVer), age)
 	b.WriteString("Chart Status\n")
 	status := strings.TrimSpace(r.ChartStatus)
 	if status == "" {
@@ -560,7 +640,7 @@ func (m *Model) detailView() string {
 		statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	}
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
-	fmt.Fprintf(&b, "  Status: %s\n", statusStyle.Render(status))
+	fmt.Fprintf(&b, "  Status: %s\n", statusStyle.Render(statusLabel(status)))
 	fmt.Fprintf(&b, "  Current: %s\n", emptyDash(r.ChartVer))
 	latest := strings.TrimSpace(r.LatestVersion)
 	if latest == "" {
@@ -626,8 +706,9 @@ func (m *Model) detailView() string {
 	if m.detailPodsErr != nil {
 		fmt.Fprintf(&b, "\nerror: %v\n", m.detailPodsErr)
 	}
-	b.WriteString("\nr refresh • esc back • q quit")
-	return b.String()
+	m.detailViewport.SetContent(b.String())
+	footer := m.footerStyle.Width(maxInt(1, m.width)).Render("r refresh • ↑/↓ scroll • esc back • q quit")
+	return lipgloss.JoinVertical(lipgloss.Left, m.buildHeader(), m.detailViewport.View(), footer)
 }
 
 func printReplicaSetRevision(b *strings.Builder, label string, rs *kube.ReplicaSetRevision) {
@@ -660,7 +741,7 @@ func (m *Model) buildHeader() string {
 	}
 	left := m.headerAppNameStyle.Render("KRADAR")
 	center := m.connectionSummary()
-	right := fmt.Sprintf("releases: %d • last refresh: %s", len(m.rows), formatTime(m.lastRefresh))
+	right := fmt.Sprintf("%s • releases: %d • %s", m.statusSummary(), len(m.rows), formatTime(m.lastRefresh))
 
 	available := w - lipgloss.Width(left) - lipgloss.Width(right) - 4
 	if available < 8 {
@@ -686,12 +767,15 @@ func (m *Model) buildFooter() string {
 	if w <= 0 {
 		w = 120
 	}
-	hint := "q quit • r refresh • ↑/↓ move • enter details • s sort • c conn • ? help"
+	hint := "q quit • r refresh • ↑/↓ move • enter details • s sort • / filter • a toggle ns • c conn • ? help"
 	switch m.mode {
 	case modeDetails:
-		hint = "r refresh • esc back • q quit"
+		hint = "r refresh • ↑/↓ scroll • esc back • q quit"
 	case modeError, modeDegraded:
 		hint = "q quit • r retry • c conn • ? help"
+	}
+	if m.filterActive {
+		hint = "esc clear filter • ↑/↓ move • enter details • q quit"
 	}
 	hint = fitToWidth(hint, w)
 	return m.footerStyle.Width(w).Render(hint)
@@ -715,6 +799,8 @@ func (m *Model) renderHelpOverlay(base string) string {
 		"  ↑/↓, j/k    move selection",
 		"  enter       details",
 		"  s           cycle sort (status/namespace/release/pods)",
+		"  /           filter by namespace or release name",
+		"  a           toggle all-namespaces view",
 		"  ? or esc    close help",
 		"",
 		"Columns:",
@@ -723,7 +809,7 @@ func (m *Model) renderHelpOverlay(base string) string {
 		"  STATUS      chart update status",
 		"  IMAGES      sampled workload images",
 		"",
-		"unknown status means latest chart version could not be determined.",
+		"Unknown status means latest chart version could not be determined.",
 	}, "\n")
 	overlay := m.overlayStyle.Render(help)
 	modal := lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, overlay)
@@ -767,6 +853,7 @@ func (m *Model) resizeTable() {
 		appVerW    = 10
 		podsW      = 5
 		statusW    = 10
+		ageW       = 5
 		releaseMin = 24
 		releaseMax = 36
 		imagesMin  = 20
@@ -774,7 +861,7 @@ func (m *Model) resizeTable() {
 	)
 
 	releaseW := clampInt(releaseMin, releaseMax, m.width/4)
-	fixedNoDynamic := namespaceW + chartW + appVerW + podsW + statusW
+	fixedNoDynamic := namespaceW + chartW + appVerW + podsW + statusW + ageW
 	availableForReleaseAndImages := m.width - fixedNoDynamic - chromePad
 	if availableForReleaseAndImages < imagesMin+releaseW {
 		releaseW = maxInt(releaseMin, availableForReleaseAndImages-imagesMin)
@@ -792,6 +879,7 @@ func (m *Model) resizeTable() {
 		{Title: "CHART@VER", Width: chartW},
 		{Title: "APPVER", Width: appVerW},
 		{Title: "PODS", Width: podsW},
+		{Title: "AGE", Width: ageW},
 		{Title: "STATUS", Width: statusW},
 		{Title: "IMAGES", Width: imagesW},
 	}
@@ -845,8 +933,14 @@ func (m *Model) refreshTableRows() {
 		selectedKey = detailKey(selected.Namespace, selected.Release)
 	}
 
+	filterText := strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
 	rows := make([]table.Row, 0, len(m.rows))
 	for _, r := range m.rows {
+		if filterText != "" &&
+			!strings.Contains(strings.ToLower(r.Namespace), filterText) &&
+			!strings.Contains(strings.ToLower(r.Release), filterText) {
+			continue
+		}
 		pods := "-"
 		if r.Pods != nil {
 			pods = fmt.Sprintf("%d", *r.Pods)
@@ -864,14 +958,16 @@ func (m *Model) refreshTableRows() {
 		}
 		imagesSummary = strings.ReplaceAll(imagesSummary, "\n", " ")
 		imagesSummary = strings.ReplaceAll(imagesSummary, "\t", " ")
-		statusCell := Truncate(statusRaw, 10)
+		statusCell := statusLabel(statusRaw)
 		imagesCell := Truncate(imagesSummary, m.imagesColWidth)
+		ageCell := formatAge(r.DeployedAt)
 		rows = append(rows, table.Row{
 			r.Namespace,
 			r.Release,
 			Truncate(fmt.Sprintf("%s@%s", r.Chart, r.ChartVer), 22),
 			Truncate(emptyDash(r.AppVer), 10),
 			Truncate(pods, 5),
+			ageCell,
 			statusCell,
 			imagesCell,
 		})
@@ -880,6 +976,76 @@ func (m *Model) refreshTableRows() {
 	if selectedKey != "" {
 		m.selectRowByKey(selectedKey)
 	}
+}
+
+func (m *Model) renderTableHeader() string {
+	cols := m.table.Columns()
+	cells := make([]string, len(cols))
+	bold := lipgloss.NewStyle().Bold(true)
+	for i, col := range cols {
+		cell := lipgloss.NewStyle().Width(col.Width).MaxWidth(col.Width).Inline(true).Render(col.Title)
+		cells[i] = bold.Render(cell)
+	}
+	return strings.Join(cells, " ")
+}
+
+// renderTableBody renders rows with per-row status coloring, bypassing
+// bubbles/table's runewidth-based cell truncation which strips ANSI codes.
+func (m *Model) renderTableBody(height int) string {
+	cursor := m.table.Cursor()
+	cols := m.table.Columns()
+	rows := m.table.Rows()
+	if len(rows) == 0 {
+		return ""
+	}
+
+	start, end := visibleWindow(cursor, len(rows), height)
+
+	selectedStyle := lipgloss.NewStyle().Bold(true).Reverse(true)
+
+	var lines []string
+	for i := start; i < end; i++ {
+		row := rows[i]
+		// column order: namespace, release, chart@ver, appver, pods, age, status, images
+		status := ""
+		if len(row) > 6 {
+			status = row[6]
+		}
+
+		cells := make([]string, len(cols))
+		for j, col := range cols {
+			val := ""
+			if j < len(row) {
+				val = row[j]
+			}
+			cells[j] = lipgloss.NewStyle().Width(col.Width).MaxWidth(col.Width).Inline(true).Render(val)
+		}
+		line := strings.Join(cells, " ")
+		if status == "Outdated" {
+			line = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(line)
+		}
+		if i == cursor {
+			line = selectedStyle.Render(line)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func visibleWindow(cursor, total, height int) (start, end int) {
+	if total <= height {
+		return 0, total
+	}
+	start = cursor - height/2
+	if start < 0 {
+		start = 0
+	}
+	end = start + height
+	if end > total {
+		end = total
+		start = end - height
+	}
+	return
 }
 
 func (m *Model) selectedServiceRow() (helm.ServiceRow, bool) {
@@ -1050,6 +1216,19 @@ func formatImages(images []string) string {
 	return fmt.Sprintf("%s, %s, +%d more", images[0], images[1], len(images)-2)
 }
 
+func statusLabel(s string) string {
+	switch s {
+	case "up_to_date":
+		return "Up to date"
+	case "outdated":
+		return "Outdated"
+	case "unknown":
+		return "Unknown"
+	default:
+		return s
+	}
+}
+
 func statusRank(status string) int {
 	switch status {
 	case "outdated":
@@ -1093,6 +1272,47 @@ func (s connStage) String() string {
 		return "error"
 	default:
 		return "unknown"
+	}
+}
+
+func (m *Model) statusSummary() string {
+	if len(m.rows) == 0 || !m.checkerEnabled {
+		return "-"
+	}
+	counts := map[string]int{}
+	for _, r := range m.rows {
+		counts[r.ChartStatus]++
+	}
+	parts := []string{}
+	if n := counts["outdated"]; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d outdated", n))
+	}
+	if n := counts["unknown"]; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d unknown", n))
+	}
+	if n := counts["up_to_date"]; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d ok", n))
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, " • ")
+}
+
+func formatAge(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
 }
 

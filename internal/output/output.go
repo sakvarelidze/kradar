@@ -42,7 +42,7 @@ func renderTable(w io.Writer, rows []helm.ServiceRow) error {
 			r.ChartVer,
 			emptyDash(r.AppVer),
 			pods,
-			r.ChartStatus,
+			statusLabel(r.ChartStatus),
 			images,
 		)
 	}
@@ -56,6 +56,19 @@ func shortenImages(images []string) []string {
 	short := append([]string{}, images[:2]...)
 	short = append(short, fmt.Sprintf("+%d more", len(images)-2))
 	return short
+}
+
+func statusLabel(s string) string {
+	switch s {
+	case "up_to_date":
+		return "Up to date"
+	case "outdated":
+		return "Outdated"
+	case "unknown":
+		return "Unknown"
+	default:
+		return s
+	}
 }
 
 func emptyDash(v string) string {

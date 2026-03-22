@@ -139,16 +139,25 @@ func (c *ChartChecker) CheckAll(ctx context.Context, releases []helm.ReleaseInfo
 		reposNeeded[repoURL] = struct{}{}
 	}
 
-	indexes := map[string]RepoIndex{}
-	fetchErr := map[string]error{}
+	indexes := make(map[string]RepoIndex, len(reposNeeded))
+	fetchErr := make(map[string]error, len(reposNeeded))
+	var fetchMu sync.Mutex
+	var wg sync.WaitGroup
 	for repoURL := range reposNeeded {
-		idx, err := c.fetchRepoIndex(ctx, repoURL)
-		if err != nil {
-			fetchErr[repoURL] = err
-			continue
-		}
-		indexes[repoURL] = idx
+		wg.Add(1)
+		go func(url string) {
+			defer wg.Done()
+			idx, err := c.fetchRepoIndex(ctx, url)
+			fetchMu.Lock()
+			if err != nil {
+				fetchErr[url] = err
+			} else {
+				indexes[url] = idx
+			}
+			fetchMu.Unlock()
+		}(repoURL)
 	}
+	wg.Wait()
 
 	for _, rel := range releases {
 		key := rel.Namespace + "/" + rel.Name
@@ -393,8 +402,8 @@ func (c *ChartChecker) fetchIndexBody(ctx context.Context, repo config.ChartSour
 	switch repo.Auth.Type {
 	case "basic_env":
 		username := strings.TrimSpace(os.Getenv(repo.Auth.UsernameEnv))
-		password := os.Getenv(repo.Auth.PasswordEnv)
-		if username == "" || repo.Auth.PasswordEnv == "" {
+		password := strings.TrimSpace(os.Getenv(repo.Auth.PasswordEnv))
+		if username == "" || password == "" {
 			return nil, 0, fmt.Errorf("missing_credentials: basic auth env vars")
 		}
 		req.SetBasicAuth(username, password)

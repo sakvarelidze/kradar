@@ -105,6 +105,7 @@ func mapRelease(rel *release.Release) ReleaseInfo {
 	}
 	if rel.Info != nil {
 		info.Updated = rel.Info.LastDeployed.String()
+		info.DeployedAt = rel.Info.LastDeployed.Time
 	}
 	return info
 }

@@ -91,9 +91,13 @@ var doctorCmd = &cobra.Command{
 				}
 			}
 		}
+		cacheDir := ""
+		if actx.ChartChecker != nil {
+			cacheDir = actx.ChartChecker.CacheDir()
+		}
 		_, _ = fmt.Fprintf(os.Stdout, "config_path: %s\n", actx.ConfigPath)
 		_, _ = fmt.Fprintf(os.Stdout, "chart_sources: %d\n", len(actx.Cfg.ChartSources))
-		_, _ = fmt.Fprintf(os.Stdout, "cache_dir: %s\n", actx.ChartChecker.CacheDir())
+		_, _ = fmt.Fprintf(os.Stdout, "cache_dir: %s\n", cacheDir)
 		_, _ = fmt.Fprintf(os.Stdout, "checker_enabled: %t\n", checkerEnabled)
 		_, _ = fmt.Fprintf(os.Stdout, "sample_mapping: %s\n", mapping)
 		return nil

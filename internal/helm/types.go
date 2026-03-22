@@ -4,26 +4,28 @@ import "time"
 
 // ReleaseInfo represents a Helm release surfaced as a service.
 type ReleaseInfo struct {
-	Name                string   `json:"name"`
-	Namespace           string   `json:"namespace"`
-	ChartName           string   `json:"chartName"`
-	NormalizedChartName string   `json:"normalizedChartName,omitempty"`
-	ChartVersion        string   `json:"chartVersion"`
-	AppVersion          string   `json:"appVersion,omitempty"`
-	Status              string   `json:"status"`
-	Updated             string   `json:"updated,omitempty"`
-	PodCount            *int     `json:"podCount,omitempty"`
-	Images              []string `json:"images,omitempty"`
+	Name                string    `json:"name"`
+	Namespace           string    `json:"namespace"`
+	ChartName           string    `json:"chartName"`
+	NormalizedChartName string    `json:"normalizedChartName,omitempty"`
+	ChartVersion        string    `json:"chartVersion"`
+	AppVersion          string    `json:"appVersion,omitempty"`
+	Status              string    `json:"status"`
+	Updated             string    `json:"updated,omitempty"`
+	DeployedAt          time.Time `json:"deployedAt,omitempty"`
+	PodCount            *int      `json:"podCount,omitempty"`
+	Images              []string  `json:"images,omitempty"`
 }
 
 // ServiceRow is the final user-facing result row.
 type ServiceRow struct {
-	Namespace           string   `json:"namespace"`
-	Release             string   `json:"release"`
-	Chart               string   `json:"chart"`
-	ChartVer            string   `json:"chartVersion"`
-	AppVer              string   `json:"appVersion,omitempty"`
-	Pods                *int     `json:"pods,omitempty"`
+	Namespace           string    `json:"namespace"`
+	DeployedAt          time.Time `json:"deployedAt,omitempty"`
+	Release             string    `json:"release"`
+	Chart               string    `json:"chart"`
+	ChartVer            string    `json:"chartVersion"`
+	AppVer              string    `json:"appVersion,omitempty"`
+	Pods                *int      `json:"pods,omitempty"`
 	PodError            string   `json:"podError,omitempty"`
 	ChartStatus         string   `json:"chartStatus"`
 	ChartStatusReason   string   `json:"chartStatusReason,omitempty"`
